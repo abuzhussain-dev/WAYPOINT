@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "waypointtracker",
+  "version": "${version}",
+  "name": "Auto Waypoint Tracker",
+  "description": "Automatic triangulation exploit for Locator Bar waypoints",
+  "authors": ["You"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.example.waypointtracker.StandaloneWaypointTracker"
+    ]
+  },
+  "mixins": [
+    "waypointtracker.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

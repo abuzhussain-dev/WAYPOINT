@@ -1,0 +1,775 @@
+I cannot directly log into GitHub and create files for you, but here is the complete copy-paste guide to create everything via GitHub's web interface in under 10 minutes.
+
+---
+
+Step 1: Create Empty Repo
+
+1. Go to [github.com/new](https://github.com/new)
+2. Repository name: `waypointtracker`
+3. Uncheck "Add a README file"
+4. Uncheck "Add .gitignore"
+5. Uncheck "Choose a license"
+6. Click Create repository
+
+---
+
+Step 2: Add Files One by One
+
+Click "Add file" → "Create new file" for each file below.
+
+Type the full path into the Name your file... box, paste the code, then click "Commit changes..." at the bottom.
+
+---
+
+File 1: `.github/workflows/build.yml`
+
+```yaml
+name: Build WaypointTracker Mod
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.8
+
+      - name: Build with Gradle
+        run: gradle build --no-daemon
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: WaypointTracker-Build
+          path: build/libs/waypointtracker-*.jar
+          retention-days: 30
+
+      - name: Upload Release Asset (if tagged)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/libs/waypointtracker-*.jar
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+---
+
+File 2: `gradle.properties`
+
+```properties
+minecraft_version=1.21.11
+loader_version=0.18.1
+fabric_version=0.139.4+1.21.11
+org.gradle.jvmargs=-Xmx2G
+```
+
+---
+
+File 3: `build.gradle`
+
+```gradle
+plugins {
+    id 'fabric-loom' version '1.14-SNAPSHOT'
+    id 'maven-publish'
+    id 'java'
+}
+
+version = '1.0.0'
+group = 'com.example'
+
+base {
+    archivesName = 'waypointtracker'
+}
+
+repositories {
+    maven { url "https://maven.fabricmc.net/" }
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+}
+
+processResources {
+    inputs.property "version", project.version
+    filteringCharset "UTF-8"
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withSourcesJar()
+}
+```
+
+---
+
+File 4: `settings.gradle`
+
+```gradle
+pluginManagement {
+    repositories {
+        maven { url "https://maven.fabricmc.net/" }
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+rootProject.name = 'waypointtracker'
+```
+
+---
+
+File 5: `.gitignore`
+
+```gitignore
+.gradle/
+build/
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.class
+.DS_Store
+Thumbs.db
+run/
+```
+
+---
+
+File 6: `src/main/resources/fabric.mod.json`
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "waypointtracker",
+  "version": "${version}",
+  "name": "Auto Waypoint Tracker",
+  "description": "Automatic triangulation exploit for Locator Bar waypoints",
+  "authors": ["You"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.example.waypointtracker.StandaloneWaypointTracker"
+    ]
+  },
+  "mixins": [
+    "waypointtracker.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
+```
+
+---
+
+File 7: `src/main/resources/waypointtracker.mixins.json`
+
+```json
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.example.waypointtracker.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ClientPacketListenerMixin",
+    "SetWaypointPacketAccess",
+    "ResetWaypointPacketAccess"
+  ]
+}
+```
+
+---
+
+File 8: `src/main/java/com/example/waypointtracker/StandaloneWaypointTracker.java`
+
+```java
+package com.example.waypointtracker;
+
+import net.fabricmc.api.ClientModInitializer;
+
+public class StandaloneWaypointTracker implements ClientModInitializer {
+    @Override
+    public void onInitializeClient() {
+        WaypointTracker.getInstance().init();
+    }
+}
+```
+
+---
+
+File 9: `src/main/java/com/example/waypointtracker/WaypointTracker.java`
+
+```java
+package com.example.waypointtracker;
+
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.multiplayer.PlayerInfo;
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.phys.Vec3;
+
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+
+public class WaypointTracker {
+    private static final WaypointTracker INSTANCE = new WaypointTracker();
+    public static WaypointTracker getInstance() { return INSTANCE; }
+
+    private static final long STALE_TIMEOUT = 30000;
+
+    private final Map<<UUID, String> uuidToName = new ConcurrentHashMap<>();
+    private final Map<<UUID, WaypointPin> activePins = new ConcurrentHashMap<>();
+    private final Map<<UUID, Long> lastPacket = new ConcurrentHashMap<>();
+
+    private final TriangulationEngine engine = new TriangulationEngine();
+    private final WaypointDatabase database = new WaypointDatabase();
+    private final GuideManager guide = new GuideManager();
+
+    public static class WaypointPin {
+        public final String name;
+        public final double x, z;
+        public final String method;
+        public final double confidence;
+        public final long time;
+        public WaypointPin(String name, double x, double z, String method, double confidence) {
+            this.name = name; this.x = x; this.z = z;
+            this.method = method; this.confidence = confidence; this.time = System.currentTimeMillis();
+        }
+    }
+
+    public void init() {
+        ClientTickEvents.END_CLIENT_TICK.register(this::onTick);
+        HudRenderCallback.EVENT.register(this::onHud);
+    }
+
+    public void handleSetWaypoint(UUID uuid, Optional<BlockPos> pos, Optional<Float> angle, Optional<<Component> label) {
+        if (uuid == null) return;
+        updateNameMap();
+        String name = uuidToName.getOrDefault(uuid, uuid.toString().substring(0, 8));
+        lastPacket.put(uuid, System.currentTimeMillis());
+
+        if (pos.isPresent()) {
+            BlockPos p = pos.get();
+            double conf = 1.0;
+            activePins.put(uuid, new WaypointPin(name, p.getX(), p.getZ(), "EXACT", conf));
+            database.record(uuid, name, p.getX(), p.getZ(), "EXACT", conf);
+            guide.sendSuccess(uuid, name, p.getX(), p.getZ(), "EXACT", conf);
+            engine.clear(uuid);
+            return;
+        }
+
+        if (angle.isPresent()) {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.player == null) return;
+            Vec3 cur = mc.player.position();
+            engine.addSample(uuid, cur, angle.get());
+            trySolve(uuid, name);
+        }
+    }
+
+    public void handleResetWaypoint(UUID uuid) {
+        activePins.remove(uuid);
+        engine.clear(uuid);
+        lastPacket.remove(uuid);
+    }
+
+    private void trySolve(UUID uuid, String name) {
+        Vec3 est = engine.solve(uuid);
+        if (est == null) return;
+
+        int n = engine.getSampleCount(uuid);
+        double conf = (n <= 2) ? 0.72 : Math.min(0.95, 0.35 + (n * 0.06));
+
+        WaypointPin old = activePins.get(uuid);
+        if (old != null) {
+            double jump = Math.hypot(est.x - old.x, est.z - old.z);
+            if (jump > 60.0) {
+                engine.clear(uuid);
+                return;
+            }
+        }
+
+        String method = (n <= 2) ? "2-POINT" : "LEAST-SQUARES";
+        activePins.put(uuid, new WaypointPin(name, est.x, est.z, method, conf));
+        database.record(uuid, name, est.x, est.z, method, conf);
+        guide.sendSuccess(uuid, name, est.x, est.z, method, conf);
+    }
+
+    private void onTick(Minecraft mc) {
+        if (mc.player == null) return;
+        long now = System.currentTimeMillis();
+
+        Iterator<Map.Entry<<UUID, Long>> it = lastPacket.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<<UUID, Long> e = it.next();
+            if (now - e.getValue() > STALE_TIMEOUT) {
+                UUID uuid = e.getKey();
+                activePins.remove(uuid);
+                engine.clear(uuid);
+                it.remove();
+            }
+        }
+
+        for (UUID uuid : lastPacket.keySet()) {
+            WaypointPin pin = activePins.get(uuid);
+            if (pin != null && pin.confidence >= 0.85) continue;
+
+            Vec3 guidePos = engine.getGuideTarget(uuid, mc.player.position());
+            if (guidePos != null) {
+                String reason = (pin == null) ? "Need 2nd sample" : "Improve lock";
+                String name = uuidToName.getOrDefault(uuid, uuid.toString().substring(0, 8));
+                guide.sendGuide(uuid, guidePos, name, reason);
+            }
+        }
+    }
+
+    private void onHud(GuiGraphics graphics, float tickDelta) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || activePins.isEmpty()) return;
+
+        Font font = mc.font;
+        int y = 10;
+        for (WaypointPin pin : activePins.values()) {
+            double dist = Math.hypot(mc.player.getX() - pin.x, mc.player.getZ() - pin.z);
+            String col = pin.confidence >= 0.95 ? "§a" : pin.confidence >= 0.7 ? "§e" : "§c";
+            String txt = String.format(
+                "%s[✦] §f%s §7(%.0f, %.0f) §e[%.0fm] §8| §7%s §8| §7%.0f%%",
+                col, pin.name, pin.x, pin.z, dist, pin.method, pin.confidence * 100
+            );
+            graphics.drawString(font, txt, 10, y, 0xFFFFFF, true);
+            y += 12;
+        }
+    }
+
+    private void updateNameMap() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.getConnection() == null || mc.getConnection().getOnlinePlayers() == null) return;
+        for (PlayerInfo info : mc.getConnection().getOnlinePlayers()) {
+            if (info.getProfile() == null || info.getProfile().getId() == null) continue;
+            String n = info.getTabListDisplayName() != null
+                ? info.getTabListDisplayName().getString()
+                : info.getProfile().getName();
+            if (n != null && !n.isEmpty()) uuidToName.put(info.getProfile().getId(), n);
+        }
+    }
+}
+```
+
+---
+
+File 10: `src/main/java/com/example/waypointtracker/TriangulationEngine.java`
+
+```java
+package com.example.waypointtracker;
+
+import net.minecraft.world.phys.Vec3;
+
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+
+public class TriangulationEngine {
+    private static final double MIN_SAMPLE_DISTANCE = 8.0;
+    private static final double MIN_ANGLE_DELTA = Math.toRadians(2.0);
+
+    public static class AzimuthSample {
+        public final Vec3 playerPos;
+        public final float angle;
+        public final long time;
+        public AzimuthSample(Vec3 pos, float angle) {
+            this.playerPos = pos;
+            this.angle = angle;
+            this.time = System.currentTimeMillis();
+        }
+    }
+
+    private final Map<<UUID, List<<AzimuthSample>> sampleMap = new ConcurrentHashMap<>();
+
+    public void addSample(UUID uuid, Vec3 pos, float angle) {
+        List<<AzimuthSample> list = sampleMap.computeIfAbsent(uuid, k -> new ArrayList<>());
+        if (!list.isEmpty()) {
+            AzimuthSample last = list.get(list.size() - 1);
+            if (pos.distanceTo(last.playerPos) < MIN_SAMPLE_DISTANCE) {
+                list.set(list.size() - 1, new AzimuthSample(pos, angle));
+                return;
+            }
+        }
+        list.add(new AzimuthSample(pos, angle));
+        if (list.size() > 12) list.remove(0);
+    }
+
+    public Vec3 solve(UUID uuid) {
+        List<<AzimuthSample> list = sampleMap.get(uuid);
+        if (list == null || list.size() < 2) return null;
+        if (list.size() == 2) return solveTwoPoint(list);
+        return solveLeastSquares(list);
+    }
+
+    private Vec3 solveTwoPoint(List<<AzimuthSample> list) {
+        AzimuthSample s1 = list.get(0);
+        AzimuthSample s2 = list.get(list.size() - 1);
+        double x1 = s1.playerPos.x, z1 = s1.playerPos.z;
+        double x2 = s2.playerPos.x, z2 = s2.playerPos.z;
+        double dx1 = -Math.sin(s1.angle);
+        double dz1 =  Math.cos(s1.angle);
+        double dx2 = -Math.sin(s2.angle);
+        double dz2 =  Math.cos(s2.angle);
+        double denom = dx1 * dz2 - dz1 * dx2;
+        if (Math.abs(denom) < 1e-8) return null;
+        double t = ((x2 - x1) * dz2 - (z2 - z1) * dx2) / denom;
+        return new Vec3(x1 + t * dx1, 64.0, z1 + t * dz1);
+    }
+
+    private Vec3 solveLeastSquares(List<<AzimuthSample> list) {
+        int n = list.size();
+        double a00 = 0, a01 = 0, a11 = 0;
+        double b0 = 0, b1 = 0;
+        for (AzimuthSample s : list) {
+            double c = Math.cos(s.angle);
+            double sn = Math.sin(s.angle);
+            a00 += c * c;
+            a01 += c * sn;
+            a11 += sn * sn;
+            double rhs = c * s.playerPos.x + sn * s.playerPos.z;
+            b0 += c * rhs;
+            b1 += sn * rhs;
+        }
+        double det = a00 * a11 - a01 * a01;
+        if (Math.abs(det) < 1e-8) return null;
+        double x = (b0 * a11 - a01 * b1) / det;
+        double z = (a00 * b1 - b0 * a01) / det;
+        return new Vec3(x, 64.0, z);
+    }
+
+    public Vec3 getGuideTarget(UUID uuid, Vec3 currentPos) {
+        List<<AzimuthSample> list = sampleMap.get(uuid);
+        if (list == null || list.isEmpty()) return null;
+        if (list.size() >= 2) {
+            float delta = Math.abs(list.get(0).angle - list.get(list.size() - 1).angle);
+            while (delta > (float) Math.PI) delta -= 2 * (float) Math.PI;
+            if (Math.abs(delta) > MIN_ANGLE_DELTA) return null;
+        }
+        AzimuthSample first = list.get(0);
+        double px = Math.cos(first.angle);
+        double pz = Math.sin(first.angle);
+        return new Vec3(currentPos.x + px * 80, currentPos.y, currentPos.z + pz * 80);
+    }
+
+    public void clear(UUID uuid) {
+        sampleMap.remove(uuid);
+    }
+
+    public int getSampleCount(UUID uuid) {
+        List<<AzimuthSample> list = sampleMap.get(uuid);
+        return list == null ? 0 : list.size();
+    }
+}
+```
+
+---
+
+File 11: `src/main/java/com/example/waypointtracker/WaypointDatabase.java`
+
+```java
+package com.example.waypointtracker;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.reflect.TypeToken;
+import net.fabricmc.loader.api.FabricLoader;
+
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
+
+public class WaypointDatabase {
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private final Path jsonFile;
+    private final Path logFile;
+    private final List<<Entry> entries = new CopyOnWriteArrayList<>();
+
+    public static class Entry {
+        public String uuid;
+        public String name;
+        public double x, z;
+        public String timestamp;
+        public String method;
+        public double confidence;
+    }
+
+    public WaypointDatabase() {
+        Path dir = FabricLoader.getInstance().getConfigDir().resolve("waypointtracker");
+        try { Files.createDirectories(dir); } catch (IOException e) { e.printStackTrace(); }
+        this.jsonFile = dir.resolve("waypoints.json");
+        this.logFile = dir.resolve("history.log");
+        load();
+    }
+
+    public void load() {
+        if (!Files.exists(jsonFile)) return;
+        try (Reader r = Files.newBufferedReader(jsonFile)) {
+            List<<Entry> loaded = GSON.fromJson(r, new TypeToken<List<<Entry>>(){}.getType());
+            if (loaded != null) {
+                entries.clear();
+                entries.addAll(loaded);
+            }
+        } catch (Exception e) { e.printStackTrace(); }
+    }
+
+    public void save() {
+        try (Writer w = Files.newBufferedWriter(jsonFile)) {
+            GSON.toJson(entries, w);
+        } catch (IOException e) { e.printStackTrace(); }
+    }
+
+    public void record(UUID uuid, String name, double x, double z, String method, double confidence) {
+        entries.removeIf(e -> e.uuid.equals(uuid.toString()));
+        Entry e = new Entry();
+        e.uuid = uuid.toString();
+        e.name = name;
+        e.x = x;
+        e.z = z;
+        e.timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        e.method = method;
+        e.confidence = confidence;
+        entries.add(e);
+        save();
+
+        try {
+            String line = String.format("[%s] %s | %s | (%.2f, %.2f) | %.0f%% | %s%n",
+                e.timestamp, uuid.toString().substring(0, 8), name, x, z, confidence * 100, method);
+            Files.writeString(logFile, line, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (IOException ex) { ex.printStackTrace(); }
+    }
+
+    public List<<Entry> getAll() { return new ArrayList<>(entries); }
+    public Entry get(UUID uuid) {
+        for (Entry e : entries) if (e.uuid.equals(uuid.toString())) return e;
+        return null;
+    }
+}
+```
+
+---
+
+File 12: `src/main/java/com/example/waypointtracker/GuideManager.java`
+
+```java
+package com.example.waypointtracker;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.phys.Vec3;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
+public class GuideManager {
+    private final Map<<UUID, Long> lastGuide = new HashMap<>();
+    private static final long COOLDOWN = 6000;
+
+    public void sendGuide(UUID uuid, Vec3 target, String name, String reason) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) return;
+        long now = System.currentTimeMillis();
+        if (now - lastGuide.getOrDefault(uuid, 0L) < COOLDOWN) return;
+        lastGuide.put(uuid, now);
+
+        Vec3 p = mc.player.position();
+        double dx = target.x - p.x;
+        double dz = target.z - p.z;
+        double dist = Math.hypot(dx, dz);
+        String dir = getDirection(dx, dz);
+
+        String msg = String.format(
+            "§8[§b►§8] §eGuide: §fMove §b%s §7(%.0fm) §fto §a(%.0f, %.0f) §7| %s §c%s",
+            dir, dist, target.x, target.z, reason, name
+        );
+        mc.player.sendSystemMessage(Component.literal(msg));
+    }
+
+    public void sendSuccess(UUID uuid, String name, double x, double z, String method, double confidence) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) return;
+        String color = confidence >= 0.95 ? "§a" : confidence >= 0.7 ? "§e" : "§c";
+        String msg = String.format(
+            "§8[§d✦§8] §7Tracker: %s%s §8» §f%s §7@ §a(%.0f, %.0f) §8| §7%.0f%% §7| §b%s",
+            color, method, name, x, z, confidence * 100, method
+        );
+        mc.player.sendSystemMessage(Component.literal(msg));
+    }
+
+    private String getDirection(double dx, double dz) {
+        double deg = Math.toDegrees(Math.atan2(-dx, dz));
+        if (deg < 0) deg += 360;
+        if (deg >= 337.5 || deg < 22.5) return "South";
+        if (deg < 67.5) return "South-West";
+        if (deg < 112.5) return "West";
+        if (deg < 157.5) return "North-West";
+        if (deg < 202.5) return "North";
+        if (deg < 247.5) return "North-East";
+        if (deg < 292.5) return "East";
+        return "South-East";
+    }
+}
+```
+
+---
+
+File 13: `src/main/java/com/example/waypointtracker/mixin/ClientPacketListenerMixin.java`
+
+```java
+package com.example.waypointtracker.mixin;
+
+import com.example.waypointtracker.WaypointTracker;
+import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.network.protocol.game.ClientboundResetWaypointPacket;
+import net.minecraft.network.protocol.game.ClientboundSetWaypointPacket;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+import java.util.UUID;
+
+@Mixin(ClientPacketListener.class)
+public class ClientPacketListenerMixin {
+
+    @Inject(method = "handleSetWaypoint", at = @At("HEAD"))
+    private void onSetWaypoint(ClientboundSetWaypointPacket packet, CallbackInfo ci) {
+        SetWaypointPacketAccess access = (SetWaypointPacketAccess) packet;
+        UUID uuid = access.getId().left().orElse(null);
+        if (uuid == null) return;
+        WaypointTracker.getInstance().handleSetWaypoint(uuid, access.getPos(), access.getAngle(), access.getLabel());
+    }
+
+    @Inject(method = "handleResetWaypoint", at = @At("HEAD"))
+    private void onResetWaypoint(ClientboundResetWaypointPacket packet, CallbackInfo ci) {
+        ResetWaypointPacketAccess access = (ResetWaypointPacketAccess) packet;
+        UUID uuid = access.getId().left().orElse(null);
+        if (uuid != null) WaypointTracker.getInstance().handleResetWaypoint(uuid);
+    }
+}
+```
+
+---
+
+File 14: `src/main/java/com/example/waypointtracker/mixin/SetWaypointPacketAccess.java`
+
+```java
+package com.example.waypointtracker.mixin;
+
+import com.mojang.datafixers.util.Either;
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundSetWaypointPacket;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.gen.Accessor;
+
+import java.util.Optional;
+import java.util.UUID;
+
+@Mixin(ClientboundSetWaypointPacket.class)
+public interface SetWaypointPacketAccess {
+    @Accessor("id")
+    Either<<UUID, ?> getId();
+
+    @Accessor("pos")
+    Optional<BlockPos> getPos();
+
+    @Accessor("angle")
+    Optional<Float> getAngle();
+
+    @Accessor("label")
+    Optional<<Component> getLabel();
+}
+```
+
+---
+
+File 15: `src/main/java/com/example/waypointtracker/mixin/ResetWaypointPacketAccess.java`
+
+```java
+package com.example.waypointtracker.mixin;
+
+import com.mojang.datafixers.util.Either;
+import net.minecraft.network.protocol.game.ClientboundResetWaypointPacket;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.gen.Accessor;
+
+import java.util.UUID;
+
+@Mixin(ClientboundResetWaypointPacket.class)
+public interface ResetWaypointPacketAccess {
+    @Accessor("id")
+    Either<<UUID, ?> getId();
+}
+```
+
+---
+
+Step 3: Wait for Build
+
+1. After committing the last file, go to Actions tab in your repo
+2. You will see "Build WaypointTracker Mod" running
+3. Wait for the green checkmark (≈ 4–6 minutes)
+4. Click the completed run → scroll to Artifacts
+5. Download WaypointTracker-Build.zip
+6. Extract → `waypointtracker-1.0.0.jar` is inside
+
+---
+
+Step 4: Auto-Release (Optional)
+
+If you want GitHub to create a Release page with the JAR:
+
+1. In your repo, click Releases → Create a new release
+2. Tag: `v1.0.0`
+3. Title: `WaypointTracker 1.0.0`
+4. Click Publish release
+5. GitHub Actions will automatically attach the `.jar` to the release page
+
+---
+
+If the Actions build fails, screenshot the error log and paste it here. I will fix it immediately.
